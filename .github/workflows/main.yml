@@ -36,15 +36,6 @@ jobs:
       with:
         cmake-version: '3.22.1'
 
-    - name: Setup QPM
-      run: |
-        wget -q https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip
-        unzip -q qpm-linux-x64.zip
-        chmod +x qpm
-        sudo mv qpm /usr/local/bin/
-        rm qpm-linux-x64.zip
-        qpm --version
-
     - name: Get version from qpm.json
       id: version
       run: |
@@ -52,8 +43,52 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Version: $VERSION"
 
-    - name: Restore QPM dependencies
-      run: qpm restore
+    - name: Create extern directory structure
+      run: |
+        mkdir -p extern/includes
+        mkdir -p extern/libs/arm64-v8a
+
+    - name: Download beatsaber-hook
+      run: |
+        cd extern
+        wget -q https://github.com/sc2ad/beatsaber-hook/releases/download/v3.14.0/beatsaber-hook_3_14_0.zip
+        unzip -q beatsaber-hook_3_14_0.zip
+        rm beatsaber-hook_3_14_0.zip
+
+    - name: Download modloader
+      run: |
+        cd extern
+        wget -q https://github.com/sc2ad/modloader/releases/download/v1.2.3/modloader_1_2_3.zip
+        unzip -q modloader_1_2_3.zip
+        rm modloader_1_2_3.zip
+
+    - name: Download custom-types
+      run: |
+        cd extern
+        wget -q https://github.com/sc2ad/BeatSaber-IPA-Reloaded/releases/download/custom-types-0.15.21/custom-types_0_15_21.zip
+        unzip -q custom-types_0_15_21.zip
+        rm custom-types_0_15_21.zip
+
+    - name: Download questui
+      run: |
+        cd extern
+        wget -q https://github.com/RedBrumbler/questui/releases/download/v0.17.3/questui_0_17_3.zip
+        unzip -q questui_0_17_3.zip
+        rm questui_0_17_3.zip
+
+    - name: Download config-utils
+      run: |
+        cd extern
+        wget -q https://github.com/Lauriethefish/config-utils/releases/download/v1.0.2/config-utils_1_0_2.zip
+        unzip -q config-utils_1_0_2.zip
+        rm config-utils_1_0_2.zip
+
+    - name: Download codegen
+      run: |
+        cd extern
+        wget -q https://github.com/sc2ad/BeatSaber-IPA-Reloaded/releases/download/codegen-0.33.0/codegen_0_33_0.zip
+        unzip -q codegen_0_33_0.zip
+        rm codegen_0_33_0.zip
 
     - name: Create build directory
       run: mkdir -p build
