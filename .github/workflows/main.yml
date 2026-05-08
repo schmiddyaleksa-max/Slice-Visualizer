@@ -38,10 +38,11 @@ jobs:
 
     - name: Setup QPM
       run: |
-        wget -q https://github.com/QuestPackageManager/QPM.CLI/releases/download/v0.15.7/qpm-0.15.7-linux.tar.gz
-        tar -xzf qpm-0.15.7-linux.tar.gz
+        wget -q https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip
+        unzip -q qpm-linux-x64.zip
+        chmod +x qpm
         sudo mv qpm /usr/local/bin/
-        rm qpm-0.15.7-linux.tar.gz
+        rm qpm-linux-x64.zip
         qpm --version
 
     - name: Get version from qpm.json
