@@ -29,7 +29,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build jq curl
+          sudo apt-get install -y ninja-build jq curl zip
 
       - name: Setup CMake
         uses: jwlawson/actions-setup-cmake@v1
@@ -46,89 +46,62 @@ jobs:
       - name: Download and setup QPM
         run: |
           mkdir -p $HOME/.local/bin
-          cd $HOME/.local/bin
-          curl -L https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip -o qpm.zip
-          unzip -q qpm.zip
-          chmod +x qpm
-          rm qpm.zip
+          # Use the latest QPM release
+          QPM_URL=$(curl -s https://api.github.com/repos/QuestPackageManager/QPM.CLI/releases/latest \
+            | jq -r '.assets[] | select(.name | contains("linux-x64")) | .browser_download_url')
+          echo "Downloading QPM from: $QPM_URL"
+          curl -L "$QPM_URL" -o /tmp/qpm.zip
+          unzip -q /tmp/qpm.zip -d $HOME/.local/bin
+          chmod +x $HOME/.local/bin/qpm
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+          qpm --version
 
       - name: Restore dependencies with QPM
         run: |
-          qpm restore --allowPrerelease || true
+          # QPM restore downloads headers into extern/ and generates
+          # qpm_defines.cmake and extern.cmake — do NOT overwrite these.
+          qpm restore
+          echo "QPM restore exit code: $?"
 
-      - name: Check restored dependencies
+      - name: Verify dependencies were restored
         run: |
-          echo "Checking extern directory structure..."
-          find extern -type f -name "*.hpp" | head -20 || echo "No headers found yet"
-          ls -la extern/includes/ 2>/dev/null || echo "No includes directory"
+          echo "=== Checking required headers ==="
+          if [ ! -f "extern/includes/modloader/shared/modloader.hpp" ]; then
+            echo "ERROR: modloader headers not found"
+            echo "Contents of extern/includes/:"
+            find extern/includes -maxdepth 2 -type d 2>/dev/null || echo "(empty or missing)"
+            exit 1
+          fi
+          if [ ! -f "extern/includes/beatsaber-hook/shared/utils/hooking.hpp" ]; then
+            echo "ERROR: beatsaber-hook headers not found"
+            exit 1
+          fi
+          if [ ! -f "extern/includes/questui/shared/QuestUI.hpp" ]; then
+            echo "ERROR: questui headers not found"
+            exit 1
+          fi
+          if [ ! -f "extern/includes/config-utils/shared/config-utils.hpp" ]; then
+            echo "ERROR: config-utils headers not found"
+            exit 1
+          fi
+          echo "All required headers found!"
 
-      - name: Create shared directory
+      - name: Verify QPM-generated cmake files
         run: |
-          mkdir -p shared
-          mkdir -p extern/includes
-          mkdir -p extern/libs/arm64-v8a
-
-      - name: Generate extern.cmake
-        run: |
-          cat > extern.cmake << 'EOF'
-          # extern.cmake - dependency linking configuration
-          
-          # Find all .so files in extern directory
-          file(GLOB_RECURSE extern_so_files "${EXTERN_DIR}/*.so")
-          
-          # Find all .a files in extern directory  
-          file(GLOB_RECURSE extern_a_files "${EXTERN_DIR}/*.a")
-          
-          # Link libraries
-          if(extern_so_files)
-              target_link_libraries(${COMPILE_ID} PRIVATE ${extern_so_files})
-          endif()
-          
-          if(extern_a_files)
-              target_link_libraries(${COMPILE_ID} PRIVATE ${extern_a_files})
-          endif()
-          EOF
-
-      - name: Generate qpm_defines.cmake
-        run: |
-          cat > qpm_defines.cmake << 'EOF'
-          cmake_minimum_required(VERSION 3.21)
-          
-          set(COMPILE_ID "slicevisualizer")
-          set(MOD_VERSION "6.0.0")
-          set(MOD_ID "slicevisualizer")
-          
-          set(SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shared")
-          set(EXTERN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern")
-          set(CODEGEN_ID "codegen")
-          
-          # Create directories if they don't exist
-          if(NOT EXISTS "${SHARED_DIR}")
-              file(MAKE_DIRECTORY "${SHARED_DIR}")
-          endif()
-          
-          if(NOT EXISTS "${EXTERN_DIR}")
-              file(MAKE_DIRECTORY "${EXTERN_DIR}")
-          endif()
-          
-          set(so_list "")
-          set(a_list "")
-          
-          file(GLOB_RECURSE so_files "${EXTERN_DIR}/*.so")
-          if(so_files)
-              list(APPEND so_list ${so_files})
-          endif()
-          
-          file(GLOB_RECURSE a_files "${EXTERN_DIR}/*.a")
-          if(a_files)
-              list(APPEND a_list ${a_files})
-          endif()
-          
-          macro(RECURSE_FILES return_list dir_pattern)
-              file(GLOB_RECURSE ${return_list} "${dir_pattern}")
-          endmacro()
-          EOF
+          echo "=== Checking QPM-generated cmake files ==="
+          if [ ! -f "qpm_defines.cmake" ]; then
+            echo "ERROR: qpm_defines.cmake not generated by QPM restore"
+            exit 1
+          fi
+          if [ ! -f "extern.cmake" ]; then
+            echo "ERROR: extern.cmake not generated by QPM restore"
+            exit 1
+          fi
+          echo "qpm_defines.cmake:"
+          cat qpm_defines.cmake
+          echo ""
+          echo "extern.cmake (first 30 lines):"
+          head -30 extern.cmake
 
       - name: Create build directory
         run: mkdir -p build
@@ -146,51 +119,50 @@ jobs:
 
       - name: Build
         working-directory: build
-        run: ninja
+        run: ninja -v
+
+      - name: Verify build output
+        run: |
+          if [ ! -f "build/libslicevisualizer.so" ]; then
+            echo "ERROR: libslicevisualizer.so not found after build"
+            ls -la build/
+            exit 1
+          fi
+          echo "Build succeeded:"
+          ls -lh build/libslicevisualizer.so
 
       - name: Create QMOD structure
         run: |
           mkdir -p qmod_build/libs/arm64-v8a
-          if [ -f build/libslicevisualizer.so ]; then
-            cp build/libslicevisualizer.so qmod_build/libs/arm64-v8a/
-          else
-            echo "Error: libslicevisualizer.so not found"
-            ls -la build/
-            exit 1
-          fi
+          cp build/libslicevisualizer.so qmod_build/libs/arm64-v8a/
 
-      - name: Create mod.json
+      - name: Create mod.json from template
         run: |
-          cat > qmod_build/mod.json << EOF
-          {
-            "\$schema": "https://raw.githubusercontent.com/Lauriethefish/QuestPatcher.QMod/main/QuestPatcher.QMod/Resources/qmod.schema.json",
-            "_QPVersion": "0.1.1",
-            "name": "Slice Visualizer",
-            "id": "slicevisualizer",
-            "author": "schmiddyaleksa-max",
-            "version": "${{ steps.version.outputs.version }}",
-            "packageId": "com.beatgames.beatsaber",
-            "packageVersion": "1.40.8_11819662659",
-            "description": "See your slices right in front of you",
-            "coverImage": "cover.png",
-            "dependencies": [],
-            "modFiles": [],
-            "libraryFiles": [],
-            "fileCopies": []
-          }
-          EOF
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -e "s/\${mod_name}/Slice Visualizer/g" \
+              -e "s/\${mod_id}/slicevisualizer/g" \
+              -e "s/\${version}/$VERSION/g" \
+              mod.template.json > qmod_build/mod.json
+          echo "Generated mod.json:"
+          cat qmod_build/mod.json
 
       - name: Copy cover image
         run: |
           if [ -f cover.png ]; then
             cp cover.png qmod_build/
+            echo "Cover image included."
+          else
+            echo "No cover.png found, skipping."
           fi
 
       - name: Create QMOD file
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           cd qmod_build
-          zip -r ../slicevisualizer-${{ steps.version.outputs.version }}.qmod .
+          zip -r "../slicevisualizer-${VERSION}.qmod" .
           cd ..
+          echo "Created: slicevisualizer-${VERSION}.qmod"
+          ls -lh "slicevisualizer-${VERSION}.qmod"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -206,9 +178,9 @@ jobs:
           files: slicevisualizer-${{ steps.version.outputs.version }}.qmod
           body: |
             # Slice Visualizer v${{ steps.version.outputs.version }}
-            
+
             **Beat Saber 1.40.8 Compatible**
-            
+
             Automated build from GitHub Actions
           draft: false
           prerelease: false
@@ -217,5 +189,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: |
-          rm -rf qmod_build
+        run: rm -rf qmod_build
