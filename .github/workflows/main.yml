@@ -43,23 +43,40 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Download and setup QPM.CLI
-        # QPM v1.5.9 is broken — it downloads libil2cpp from il2cpp.thnght.pro
-        # which is permanently offline. QPM.CLI (the successor at QuestPackageManager/QPM.CLI)
-        # uses a working registry and is backwards-compatible with the same qpm.json format.
+      - name: Download and setup QPM
         run: |
           mkdir -p $HOME/.local/bin
-          # Get latest QPM.CLI release, selecting linux-x64 but NOT the musl variant
-          QPM_URL=$(curl -s https://api.github.com/repos/QuestPackageManager/QPM.CLI/releases/latest \
-            | jq -r '[.assets[] | select(.name | test("linux-x64") and (test("musl") | not))][0].browser_download_url')
-          echo "Downloading QPM.CLI from: $QPM_URL"
-          curl -L "$QPM_URL" -o /tmp/qpm.zip
+          curl -L "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip" \
+            -o /tmp/qpm.zip
           unzip -q /tmp/qpm.zip -d $HOME/.local/bin
           chmod +x $HOME/.local/bin/qpm
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           qpm --version
 
-      - name: Restore dependencies with QPM.CLI
+      - name: Pre-populate QPM cache with libil2cpp headers
+        # il2cpp.thnght.pro is permanently offline. QPM v1.5.9 tries to download
+        # libil2cpp from there. We clone the Unity 2019 il2cpp sources from GitHub
+        # and place them exactly where QPM caches them, so it skips the download.
+        run: |
+          # QPM stores downloaded packages here (QPM-RS = QPM Rust = QPM v1.5.9)
+          CACHE_DIR="$HOME/.local/share/QPM-RS/cache"
+          IL2CPP_CACHE="$CACHE_DIR/libil2cpp/0.2.5"
+          mkdir -p "$IL2CPP_CACHE"
+
+          echo "Cloning Unity 2019 libil2cpp sources..."
+          git clone --depth=1 --filter=blob:none --sparse \
+            https://github.com/4ch12dy/il2cpp.git /tmp/il2cpp_repo
+          cd /tmp/il2cpp_repo
+          git sparse-checkout set unity_2019_x/libil2cpp
+
+          # QPM expects the headers at cache/libil2cpp/0.2.5/il2cpp/libil2cpp/
+          mkdir -p "$IL2CPP_CACHE/il2cpp"
+          cp -r /tmp/il2cpp_repo/unity_2019_x/libil2cpp "$IL2CPP_CACHE/il2cpp/libil2cpp"
+
+          echo "Cached libil2cpp at: $IL2CPP_CACHE"
+          ls "$IL2CPP_CACHE/il2cpp/libil2cpp" | head -10
+
+      - name: Restore dependencies with QPM
         run: |
           # QPM restore downloads headers into extern/ and generates
           # qpm_defines.cmake and extern.cmake — do NOT overwrite these.
