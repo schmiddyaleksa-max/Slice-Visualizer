@@ -64,7 +64,6 @@ jobs:
             fi
           }
 
-          # safe_cp: only copy if source dir exists
           safe_cp() {
             if [ -d "$1" ]; then
               cp -r "$1" "$2"
@@ -87,9 +86,9 @@ jobs:
           else
             mkdir -p extern/includes/modloader/shared
             cat > extern/includes/modloader/shared/modloader.hpp << 'HPP'
-#pragma once
-#include <string>
-struct ModInfo { std::string id; std::string version; };
+          #pragma once
+          #include <string>
+          struct ModInfo { std::string id; std::string version; };
 HPP
           fi
 
@@ -161,7 +160,7 @@ HPP
           set(so_list ${so_files})
           file(GLOB_RECURSE a_files "${EXTERN_DIR}/libs/arm64-v8a/*.a")
           set(a_list ${a_files})
-          EOF
+EOF
 
       - name: Generate extern.cmake
         run: |
@@ -181,7 +180,7 @@ HPP
             ${EXTERN_DIR}/includes/codegen/include
             ${EXTERN_DIR}/includes/libil2cpp/il2cpp/libil2cpp
           )
-          EOF
+EOF
 
       - name: Configure CMake
         run: |
