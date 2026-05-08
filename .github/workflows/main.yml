@@ -46,11 +46,10 @@ jobs:
       - name: Download and setup QPM
         run: |
           mkdir -p $HOME/.local/bin
-          # Use the latest QPM release
-          QPM_URL=$(curl -s https://api.github.com/repos/QuestPackageManager/QPM.CLI/releases/latest \
-            | jq -r '.assets[] | select(.name | contains("linux-x64")) | .browser_download_url')
-          echo "Downloading QPM from: $QPM_URL"
-          curl -L "$QPM_URL" -o /tmp/qpm.zip
+          # Pinned to the non-musl x64 build (the musl build also appears in results
+          # which broke dynamic URL selection — use a direct URL instead)
+          curl -L "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip" \
+            -o /tmp/qpm.zip
           unzip -q /tmp/qpm.zip -d $HOME/.local/bin
           chmod +x $HOME/.local/bin/qpm
           echo "$HOME/.local/bin" >> $GITHUB_PATH
