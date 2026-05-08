@@ -59,45 +59,77 @@ jobs:
         run: |
           qpm restore || echo "QPM restore had issues, continuing with build"
 
-      - name: Create build directory
-        run: mkdir -p build
+      - name: Create extern directory structure
+        run: |
+          mkdir -p extern/includes
+          mkdir -p extern/libs/arm64-v8a
+          mkdir -p shared
+
+      - name: Generate extern.cmake
+        run: |
+          cat > extern.cmake << 'EOF'
+          # extern.cmake - dependency linking configuration
+          
+          # Find all .so files in extern directory
+          file(GLOB_RECURSE extern_so_files "${EXTERN_DIR}/*.so")
+          
+          # Find all .a files in extern directory
+          file(GLOB_RECURSE extern_a_files "${EXTERN_DIR}/*.a")
+          
+          # Link libraries
+          if(extern_so_files)
+              target_link_libraries(${COMPILE_ID} PRIVATE ${extern_so_files})
+          endif()
+          
+          if(extern_a_files)
+              target_link_libraries(${COMPILE_ID} PRIVATE ${extern_a_files})
+          endif()
+          EOF
 
       - name: Generate qpm_defines.cmake if missing
         run: |
           if [ ! -f qpm_defines.cmake ]; then
             cat > qpm_defines.cmake << 'EOF'
           cmake_minimum_required(VERSION 3.21)
-
+          
           set(COMPILE_ID "slicevisualizer")
           set(MOD_VERSION "6.0.0")
           set(MOD_ID "slicevisualizer")
-
+          
           set(SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shared")
           set(EXTERN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern")
           set(CODEGEN_ID "codegen")
-
-          if(NOT EXISTS "${EXTERN_DIR}")
-              message(WARNING "extern directory not found at ${EXTERN_DIR}")
+          
+          # Create directories if they don't exist
+          if(NOT EXISTS "${SHARED_DIR}")
+              file(MAKE_DIRECTORY "${SHARED_DIR}")
           endif()
-
+          
+          if(NOT EXISTS "${EXTERN_DIR}")
+              file(MAKE_DIRECTORY "${EXTERN_DIR}")
+          endif()
+          
           set(so_list "")
           set(a_list "")
-
+          
           file(GLOB_RECURSE so_files "${EXTERN_DIR}/*.so")
           if(so_files)
               list(APPEND so_list ${so_files})
           endif()
-
+          
           file(GLOB_RECURSE a_files "${EXTERN_DIR}/*.a")
           if(a_files)
               list(APPEND a_list ${a_files})
           endif()
-
+          
           macro(RECURSE_FILES return_list dir_pattern)
               file(GLOB_RECURSE ${return_list} "${dir_pattern}")
           endmacro()
           EOF
           fi
+
+      - name: Create build directory
+        run: mkdir -p build
 
       - name: Configure CMake
         working-directory: build
