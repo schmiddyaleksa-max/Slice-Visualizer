@@ -1,0 +1,114 @@
+name: Build QMOD
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Setup Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r25c
+        add-to-path: true
+
+    - name: Install build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build
+
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v1
+      with:
+        cmake-version: '3.22.1'
+
+    - name: Setup QPM
+      run: |
+        wget -q https://github.com/QuestPackageManager/QPM.CLI/releases/download/v0.15.7/qpm-0.15.7-linux.tar.gz
+        tar -xzf qpm-0.15.7-linux.tar.gz
+        sudo mv qpm /usr/local/bin/
+        rm qpm-0.15.7-linux.tar.gz
+        qpm --version
+
+    - name: Get version from qpm.json
+      id: version
+      run: |
+        VERSION=$(jq -r '.info.version' qpm.json)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Restore QPM dependencies
+      run: qpm restore
+
+    - name: Create build directory
+      run: mkdir -p build
+
+    - name: Configure CMake
+      working-directory: build
+      run: |
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-24 \
+          -G Ninja
+
+    - name: Build
+      working-directory: build
+      run: ninja
+
+    - name: Package QMOD
+      working-directory: build
+      run: |
+        mkdir -p qmod/libs/arm64-v8a
+        mkdir -p qmod/mod.json
+        cp libslicevisualizer.so qmod/libs/arm64-v8a/
+        cd ..
+        cp mod.template.json mod.json
+        sed -i 's/${mod_name}/Slice Visualizer/g' mod.json
+        sed -i 's/${mod_id}/slicevisualizer/g' mod.json
+        sed -i "s/\${version}/${{ steps.version.outputs.version }}/g" mod.json
+        mv mod.json build/qmod/
+        if [ -f cover.png ]; then cp cover.png build/qmod/; fi
+        cd build
+        zip -r slicevisualizer-${{ steps.version.outputs.version }}.qmod qmod/
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: slicevisualizer-${{ steps.version.outputs.version }}.qmod
+        path: build/slicevisualizer-${{ steps.version.outputs.version }}.qmod
+
+    - name: Create release on tag
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/slicevisualizer-${{ steps.version.outputs.version }}.qmod
+        body: |
+          # Slice Visualizer v${{ steps.version.outputs.version }}
+          
+          Automated build from GitHub Actions
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf build/qmod
+        rm -f build/*.qmod
