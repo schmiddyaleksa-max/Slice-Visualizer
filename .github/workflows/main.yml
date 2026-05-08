@@ -64,71 +64,78 @@ jobs:
             fi
           }
 
+          # safe_cp: only copy if source dir exists
+          safe_cp() {
+            if [ -d "$1" ]; then
+              cp -r "$1" "$2"
+            else
+              echo "WARN: $1 not found, skipping"
+            fi
+          }
+
           # beatsaber-hook v3.14.0
-          clone https://github.com/sc2ad/beatsaber-hook.git \
-            /tmp/beatsaber-hook shared
-          cp -r /tmp/beatsaber-hook/shared extern/includes/beatsaber-hook
-
-          # inline-hook (needed by beatsaber-hook)
+          clone https://github.com/sc2ad/beatsaber-hook.git /tmp/beatsaber-hook shared
+          safe_cp /tmp/beatsaber-hook/shared extern/includes/beatsaber-hook
           cp -r /tmp/beatsaber-hook/src/inline-hook extern/includes/beatsaber-hook/src/ 2>/dev/null || true
-
-          # Download beatsaber-hook .so
           curl -sL "https://github.com/sc2ad/beatsaber-hook/releases/download/v3.14.0/libbeatsaber-hook_3_14_0.so" \
             -o extern/libs/arm64-v8a/libbeatsaber-hook_3_14_0.so
 
-          # modloader v1.2.3
-          clone https://github.com/sc2ad/beatsaber-hook.git /tmp/modloader shared 2>/dev/null || true
-          curl -sL "https://github.com/nicememory/scotland2/releases/download/v1.2.3/modloader.zip" \
-            -o /tmp/modloader.zip 2>/dev/null || true
-          # Try direct modloader repo
-          clone https://github.com/sc2ad/ModLoader.git /tmp/modloader2 2>/dev/null || true
+          # modloader — try ModLoader repo, fall back to stub
+          clone https://github.com/sc2ad/ModLoader.git /tmp/modloader2
           if [ -d /tmp/modloader2/shared ]; then
             cp -r /tmp/modloader2/shared extern/includes/modloader
           else
             mkdir -p extern/includes/modloader/shared
-            # Create minimal stub so the build can find the include
             cat > extern/includes/modloader/shared/modloader.hpp << 'HPP'
-          #pragma once
-          #include <string>
-          #include <functional>
-          struct ModInfo {
-              std::string id;
-              std::string version;
-          };
-          HPP
+#pragma once
+#include <string>
+struct ModInfo { std::string id; std::string version; };
+HPP
           fi
 
           # questui v0.17.3
           clone https://github.com/darknight1050/questui.git /tmp/questui shared
-          cp -r /tmp/questui/shared extern/includes/questui
+          safe_cp /tmp/questui/shared extern/includes/questui
           curl -sL "https://github.com/darknight1050/questui/releases/download/v0.17.3/libquestui.so" \
             -o extern/libs/arm64-v8a/libquestui.so 2>/dev/null || true
 
-          # config-utils v1.0.2
-          clone https://github.com/Fernthedev/config-utils.git /tmp/config-utils shared
-          cp -r /tmp/config-utils/shared extern/includes/config-utils
+          # config-utils v1.0.2 — full clone, try shared/ then include/ then whole repo
+          clone https://github.com/Fernthedev/config-utils.git /tmp/config-utils
+          mkdir -p extern/includes/config-utils
+          if [ -d /tmp/config-utils/shared ]; then
+            cp -r /tmp/config-utils/shared extern/includes/config-utils/shared
+          elif [ -d /tmp/config-utils/include ]; then
+            cp -r /tmp/config-utils/include extern/includes/config-utils/include
+          else
+            echo "WARN: config-utils no shared/include dir, copying all"
+            cp -r /tmp/config-utils/. extern/includes/config-utils/
+          fi
           curl -sL "https://github.com/Fernthedev/config-utils/releases/download/v1.0.2/libconfig-utils.so" \
             -o extern/libs/arm64-v8a/libconfig-utils.so 2>/dev/null || true
 
           # custom-types v0.15.21
           clone https://github.com/sc2ad/Il2CppQuestTypePatching.git /tmp/custom-types shared
-          cp -r /tmp/custom-types/shared extern/includes/custom-types
+          safe_cp /tmp/custom-types/shared extern/includes/custom-types
           curl -sL "https://github.com/sc2ad/Il2CppQuestTypePatching/releases/download/v0.15.21/libcustom-types.so" \
             -o extern/libs/arm64-v8a/libcustom-types.so 2>/dev/null || true
 
           # codegen v0.33.0 (headers only — large repo, sparse clone)
-          clone https://github.com/sc2ad/BeatSaber-Quest-Codegen.git \
-            /tmp/codegen include
+          clone https://github.com/sc2ad/BeatSaber-Quest-Codegen.git /tmp/codegen include
           mkdir -p extern/includes/codegen
-          cp -r /tmp/codegen/include extern/includes/codegen/include 2>/dev/null || \
-          cp -r /tmp/codegen/shared extern/includes/codegen/include 2>/dev/null || true
+          if [ -d /tmp/codegen/include ]; then
+            cp -r /tmp/codegen/include extern/includes/codegen/include
+          elif [ -d /tmp/codegen/shared ]; then
+            cp -r /tmp/codegen/shared extern/includes/codegen/include
+          else
+            echo "WARN: codegen headers not found"
+          fi
           curl -sL "https://github.com/sc2ad/BeatSaber-Quest-Codegen/releases/download/v0.33.0/libcodegen.so" \
             -o extern/libs/arm64-v8a/libcodegen.so 2>/dev/null || true
 
           # libil2cpp Unity 2019 headers (no .so needed — headers only)
           clone https://github.com/4ch12dy/il2cpp.git /tmp/il2cpp unity_2019_x/libil2cpp
           mkdir -p extern/includes/libil2cpp/il2cpp
-          cp -r /tmp/il2cpp/unity_2019_x/libil2cpp extern/includes/libil2cpp/il2cpp/libil2cpp
+          safe_cp /tmp/il2cpp/unity_2019_x/libil2cpp extern/includes/libil2cpp/il2cpp/libil2cpp
 
           echo "=== extern/includes ==="
           ls extern/includes/
