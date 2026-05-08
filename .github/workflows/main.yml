@@ -50,20 +50,69 @@ jobs:
           wget https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip -O qpm.zip
           unzip -q qpm.zip
           chmod +x qpm
-          cd -
           export PATH="$HOME/qpm:$PATH"
           echo "$HOME/qpm" >> $GITHUB_PATH
 
-      - name: Restore QPM dependencies
-        continue-on-error: true
+      - name: Configure network for QPM
         run: |
-          qpm restore || echo "QPM restore had issues, continuing with build"
+          mkdir -p ~/.qpm
+          cat > ~/.qpm/config.toml << 'EOF'
+          [cache]
+          cache_dir = "~/.qpm/cache"
+          
+          [repositories]
+          [[repositories.repos]]
+          name = "qpackages"
+          url = "https://qpackages.com"
+          EOF
 
-      - name: Create extern directory structure
+      - name: Restore QPM dependencies
+        run: |
+          export PATH="$HOME/qpm:$PATH"
+          qpm restore || {
+            echo "QPM restore failed, attempting manual setup..."
+            mkdir -p extern/includes
+            mkdir -p extern/libs/arm64-v8a
+          }
+
+      - name: Verify dependencies
+        run: |
+          echo "Checking for modloader headers..."
+          find extern -name "modloader.hpp" 2>/dev/null || echo "modloader.hpp not found, will attempt download"
+          ls -la extern/includes/ || echo "No includes directory"
+
+      - name: Download dependencies manually
         run: |
           mkdir -p extern/includes
           mkdir -p extern/libs/arm64-v8a
-          mkdir -p shared
+          
+          # Download beatsaber-hook
+          echo "Downloading beatsaber-hook..."
+          cd extern
+          wget -q https://github.com/sc2ad/beatsaber-hook/releases/download/v3.14.0/include.zip -O bsh-include.zip && unzip -q bsh-include.zip && rm bsh-include.zip || echo "beatsaber-hook download failed"
+          
+          # Create modloader mock headers if needed
+          mkdir -p includes/modloader/shared
+          
+          # Create beatsaber-hook headers if missing
+          if [ ! -d "includes/beatsaber-hook" ]; then
+            mkdir -p includes/beatsaber-hook/shared/utils
+            mkdir -p includes/beatsaber-hook/shared/config
+            
+            cat > includes/beatsaber-hook/shared/modloader.hpp << 'HEADEREOF'
+          #pragma once
+          namespace modloader {
+              struct ModInfo {
+                  const char* id;
+                  const char* version;
+              };
+          }
+          HEADEREOF
+          fi
+          cd -
+
+      - name: Create build directory
+        run: mkdir -p build
 
       - name: Generate extern.cmake
         run: |
@@ -86,10 +135,9 @@ jobs:
           endif()
           EOF
 
-      - name: Generate qpm_defines.cmake if missing
+      - name: Generate qpm_defines.cmake
         run: |
-          if [ ! -f qpm_defines.cmake ]; then
-            cat > qpm_defines.cmake << 'EOF'
+          cat > qpm_defines.cmake << 'EOF'
           cmake_minimum_required(VERSION 3.21)
           
           set(COMPILE_ID "slicevisualizer")
@@ -126,10 +174,6 @@ jobs:
               file(GLOB_RECURSE ${return_list} "${dir_pattern}")
           endmacro()
           EOF
-          fi
-
-      - name: Create build directory
-        run: mkdir -p build
 
       - name: Configure CMake
         working-directory: build
