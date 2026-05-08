@@ -41,20 +41,135 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Setup QPM
+      # QPM v1.5.9 always tries to download libil2cpp from il2cpp.thnght.pro
+      # which is permanently dead. We skip QPM entirely and clone all deps
+      # directly from their GitHub source repos instead.
+      - name: Download all dependencies manually
         run: |
-          mkdir -p $HOME/.local/bin
-          curl -sL "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip" \
-            -o /tmp/qpm.zip
-          unzip -q /tmp/qpm.zip -d $HOME/.local/bin
-          chmod +x $HOME/.local/bin/qpm
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          mkdir -p extern/includes extern/libs/arm64-v8a shared
 
-      - name: Restore dependencies
-        # libil2cpp is declared with headersOnly:true in qpm.json so QPM
-        # skips downloading from il2cpp.thnght.pro (which is permanently offline).
-        # All other deps come from the QPM registry normally.
-        run: qpm restore
+          clone() {
+            local REPO=$1 DEST=$2 SPARSE=$3
+            echo "Cloning $REPO -> $DEST"
+            if [ -n "$SPARSE" ]; then
+              git clone --depth=1 --filter=blob:none --sparse "$REPO" "$DEST"
+              cd "$DEST" && git sparse-checkout set $SPARSE && cd -
+            else
+              git clone --depth=1 "$REPO" "$DEST"
+            fi
+          }
+
+          # beatsaber-hook v3.14.0
+          clone https://github.com/sc2ad/beatsaber-hook.git \
+            /tmp/beatsaber-hook shared
+          cp -r /tmp/beatsaber-hook/shared extern/includes/beatsaber-hook
+
+          # inline-hook (needed by beatsaber-hook)
+          cp -r /tmp/beatsaber-hook/src/inline-hook extern/includes/beatsaber-hook/src/ 2>/dev/null || true
+
+          # Download beatsaber-hook .so
+          curl -sL "https://github.com/sc2ad/beatsaber-hook/releases/download/v3.14.0/libbeatsaber-hook_3_14_0.so" \
+            -o extern/libs/arm64-v8a/libbeatsaber-hook_3_14_0.so
+
+          # modloader v1.2.3
+          clone https://github.com/sc2ad/beatsaber-hook.git /tmp/modloader shared 2>/dev/null || true
+          curl -sL "https://github.com/nicememory/scotland2/releases/download/v1.2.3/modloader.zip" \
+            -o /tmp/modloader.zip 2>/dev/null || true
+          # Try direct modloader repo
+          clone https://github.com/sc2ad/ModLoader.git /tmp/modloader2 2>/dev/null || true
+          if [ -d /tmp/modloader2/shared ]; then
+            cp -r /tmp/modloader2/shared extern/includes/modloader
+          else
+            mkdir -p extern/includes/modloader/shared
+            # Create minimal stub so the build can find the include
+            cat > extern/includes/modloader/shared/modloader.hpp << 'HPP'
+          #pragma once
+          #include <string>
+          #include <functional>
+          struct ModInfo {
+              std::string id;
+              std::string version;
+          };
+          HPP
+          fi
+
+          # questui v0.17.3
+          clone https://github.com/darknight1050/questui.git /tmp/questui shared
+          cp -r /tmp/questui/shared extern/includes/questui
+          curl -sL "https://github.com/darknight1050/questui/releases/download/v0.17.3/libquestui.so" \
+            -o extern/libs/arm64-v8a/libquestui.so 2>/dev/null || true
+
+          # config-utils v1.0.2
+          clone https://github.com/Fernthedev/config-utils.git /tmp/config-utils shared
+          cp -r /tmp/config-utils/shared extern/includes/config-utils
+          curl -sL "https://github.com/Fernthedev/config-utils/releases/download/v1.0.2/libconfig-utils.so" \
+            -o extern/libs/arm64-v8a/libconfig-utils.so 2>/dev/null || true
+
+          # custom-types v0.15.21
+          clone https://github.com/sc2ad/Il2CppQuestTypePatching.git /tmp/custom-types shared
+          cp -r /tmp/custom-types/shared extern/includes/custom-types
+          curl -sL "https://github.com/sc2ad/Il2CppQuestTypePatching/releases/download/v0.15.21/libcustom-types.so" \
+            -o extern/libs/arm64-v8a/libcustom-types.so 2>/dev/null || true
+
+          # codegen v0.33.0 (headers only — large repo, sparse clone)
+          clone https://github.com/sc2ad/BeatSaber-Quest-Codegen.git \
+            /tmp/codegen include
+          mkdir -p extern/includes/codegen
+          cp -r /tmp/codegen/include extern/includes/codegen/include 2>/dev/null || \
+          cp -r /tmp/codegen/shared extern/includes/codegen/include 2>/dev/null || true
+          curl -sL "https://github.com/sc2ad/BeatSaber-Quest-Codegen/releases/download/v0.33.0/libcodegen.so" \
+            -o extern/libs/arm64-v8a/libcodegen.so 2>/dev/null || true
+
+          # libil2cpp Unity 2019 headers (no .so needed — headers only)
+          clone https://github.com/4ch12dy/il2cpp.git /tmp/il2cpp unity_2019_x/libil2cpp
+          mkdir -p extern/includes/libil2cpp/il2cpp
+          cp -r /tmp/il2cpp/unity_2019_x/libil2cpp extern/includes/libil2cpp/il2cpp/libil2cpp
+
+          echo "=== extern/includes ==="
+          ls extern/includes/
+          echo "=== extern/libs/arm64-v8a ==="
+          ls extern/libs/arm64-v8a/
+
+      - name: Generate qpm_defines.cmake
+        run: |
+          cat > qpm_defines.cmake << 'EOF'
+          cmake_minimum_required(VERSION 3.21)
+          set(COMPILE_ID "slicevisualizer")
+          set(MOD_VERSION "6.0.0")
+          set(MOD_ID "slicevisualizer")
+          set(SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shared")
+          set(EXTERN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern")
+          set(CODEGEN_ID "codegen")
+          file(MAKE_DIRECTORY "${SHARED_DIR}")
+          file(MAKE_DIRECTORY "${EXTERN_DIR}")
+          macro(RECURSE_FILES return_list dir_pattern)
+            file(GLOB_RECURSE ${return_list} "${dir_pattern}")
+          endmacro()
+          file(GLOB_RECURSE so_files "${EXTERN_DIR}/libs/arm64-v8a/*.so")
+          set(so_list ${so_files})
+          file(GLOB_RECURSE a_files "${EXTERN_DIR}/libs/arm64-v8a/*.a")
+          set(a_list ${a_files})
+          EOF
+
+      - name: Generate extern.cmake
+        run: |
+          cat > extern.cmake << 'EOF'
+          # Link all .so deps
+          file(GLOB_RECURSE EXTERN_SO_FILES "${EXTERN_DIR}/libs/arm64-v8a/*.so")
+          foreach(SO ${EXTERN_SO_FILES})
+            target_link_libraries(${COMPILE_ID} PRIVATE ${SO})
+          endforeach()
+          # Add all include paths
+          target_include_directories(${COMPILE_ID} PRIVATE
+            ${EXTERN_DIR}/includes/beatsaber-hook
+            ${EXTERN_DIR}/includes/modloader
+            ${EXTERN_DIR}/includes/questui
+            ${EXTERN_DIR}/includes/config-utils
+            ${EXTERN_DIR}/includes/custom-types
+            ${EXTERN_DIR}/includes/codegen/include
+            ${EXTERN_DIR}/includes/libil2cpp/il2cpp/libil2cpp
+          )
+          EOF
 
       - name: Configure CMake
         run: |
@@ -74,16 +189,12 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p qmod_build/libs/arm64-v8a
-
           cp build/libslicevisualizer.so qmod_build/libs/arm64-v8a/
-
           sed -e "s/\${mod_name}/Slice Visualizer/g" \
               -e "s/\${mod_id}/slicevisualizer/g" \
               -e "s/\${version}/$VERSION/g" \
               mod.template.json > qmod_build/mod.json
-
           [ -f cover.png ] && cp cover.png qmod_build/
-
           cd qmod_build
           zip -r "../slicevisualizer-${VERSION}.qmod" .
 
