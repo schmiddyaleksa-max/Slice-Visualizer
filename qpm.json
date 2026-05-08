@@ -12,13 +12,6 @@
   },
   "dependencies": [
     {
-      "id": "libil2cpp",
-      "versionRange": "=0.2.5",
-      "additionalData": {
-        "headersOnly": true
-      }
-    },
-    {
       "id": "beatsaber-hook",
       "versionRange": "^3.14.0",
       "additionalData": {
