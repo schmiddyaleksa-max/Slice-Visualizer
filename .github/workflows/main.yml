@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
@@ -88,14 +88,15 @@ jobs:
         zip -r slicevisualizer-${{ steps.version.outputs.version }}.qmod qmod/
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: slicevisualizer-${{ steps.version.outputs.version }}.qmod
         path: build/slicevisualizer-${{ steps.version.outputs.version }}.qmod
+        retention-days: 30
 
     - name: Create release on tag
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: build/slicevisualizer-${{ steps.version.outputs.version }}.qmod
         body: |
