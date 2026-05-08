@@ -53,7 +53,7 @@ namespace SliceVisualizer {
     }
 
     bool Initialize() {
-        LOG_INFO("Initializing SliceVisualizer");
+        LOG_INFO("Initializing SliceVisualizer with custom position and scale");
         
         activeSlices.clear();
         
@@ -65,11 +65,17 @@ namespace SliceVisualizer {
 
         auto gameObject = GameObject::New_ctor("SliceVisualizerRoot");
         rootTransform = gameObject->get_transform();
-        rootTransform->set_position(Vector3(0.0f, 3.0f, getModConfig().PositionZ.GetValue()));
+        
+        // Apply user-configured position
+        float posX = getModConfig().PositionX.GetValue();
+        float posY = getModConfig().PositionY.GetValue();
+        float posZ = getModConfig().PositionZ.GetValue();
+        
+        rootTransform->set_position(Vector3(posX, posY, posZ));
         rootTransform->set_localScale(Vector3(0.01f, 0.01f, 0.01f));
         rootTransform->SetParent(comboController->get_transform(), true);
         
-        LOG_INFO("SliceVisualizer initialized successfully");
+        LOG_INFO("SliceVisualizer initialized at position (%.1f, %.1f, %.1f)", posX, posY, posZ);
         return true;
     }
 
@@ -116,6 +122,7 @@ namespace SliceVisualizer {
 
         nextNoteTime = cutInfo.noteData->timeToNextColorNote;
         const float spriteSize = getModConfig().SliceScale.GetValue();
+        const float initialOpacity = getModConfig().Opacity.GetValue();
 
         // Determine sprite type based on cut direction
         Sprite* bgSprite = (cutInfo.noteData->cutDirection == NoteCutDirection::Any) 
@@ -152,11 +159,12 @@ namespace SliceVisualizer {
         // Create foreground image
         auto foreground = CreateImageComponent(background->get_transform(), fgSprite, "Foreground");
 
-        // Create cut direction line
+        // Create cut direction line with configurable thickness
         auto line = CreateImageComponent(background->get_transform(), nullptr, "CutLine");
         line->set_color(Color::get_black());
         auto lineRect = line->GetComponent<RectTransform*>();
-        lineRect->set_sizeDelta(Vector2(5.0f, 100.0f));
+        float lineThickness = getModConfig().LineThickness.GetValue();
+        lineRect->set_sizeDelta(Vector2(5.0f * lineThickness, 100.0f));
         
         auto lineTransform = line->get_transform();
         lineTransform->set_localScale(Vector3(1.0f / spriteSize, 1.0f / spriteSize, 1.0f / spriteSize));
@@ -167,13 +175,13 @@ namespace SliceVisualizer {
             0.0f
         ));
 
-        // Add to active slices
+        // Add to active slices with configured initial opacity
         activeSlices.push_back(SliceVisual{
             .parent = sliceParent->get_gameObject(),
             .backgroundImage = background,
             .foregroundImage = foreground,
             .centerLine = line,
-            .opacity = 1.0f
+            .opacity = initialOpacity
         });
     }
 

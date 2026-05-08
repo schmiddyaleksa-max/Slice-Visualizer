@@ -2,11 +2,14 @@
 #include "config.hpp"
 #include "slices.hpp"
 #include "questui/shared/QuestUI.hpp"
+#include "questui/shared/BeatSaberUI.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/NoteController.hpp"
 #include "GlobalNamespace/NoteData.hpp"
 #include "GlobalNamespace/GameplayCoreSceneSetupData.hpp"
 #include "GlobalNamespace/ColorScheme.hpp"
+#include "HMUI/ViewController.hpp"
+#include "HMUI/SimpleTextDropdown.hpp"
 
 using namespace GlobalNamespace;
 using namespace SliceVisualizer;
@@ -19,7 +22,7 @@ Logger& getLogger() {
     return *logger;
 }
 
-Make_HOOK_MATCH(AudioTimeSyncController_Start, &AudioTimeSyncController::Start, void, AudioTimeSyncController* self) {
+MACE_HOOK_MATCH(AudioTimeSyncController_Start, &AudioTimeSyncController::Start, void, AudioTimeSyncController* self) {
     AudioTimeSyncController_Start(self);
 
     if (getModConfig().Enabled.GetValue() && !initSuccessful) {
@@ -28,7 +31,7 @@ Make_HOOK_MATCH(AudioTimeSyncController_Start, &AudioTimeSyncController::Start, 
     }
 }
 
-Make_HOOK_MATCH(AudioTimeSyncController_StartSong, &AudioTimeSyncController::StartSong, void, AudioTimeSyncController* self, float startTimeOffset) {
+MACE_HOOK_MATCH(AudioTimeSyncController_StartSong, &AudioTimeSyncController::StartSong, void, AudioTimeSyncController* self, float startTimeOffset) {
     if (getModConfig().Enabled.GetValue() && initSuccessful) {
         LOG_INFO("Creating sprites for new song");
         if (!CreateSprites()) {
@@ -40,7 +43,7 @@ Make_HOOK_MATCH(AudioTimeSyncController_StartSong, &AudioTimeSyncController::Sta
     AudioTimeSyncController_StartSong(self, startTimeOffset);
 }
 
-Make_HOOK_MATCH(AudioTimeSyncController_Update, &AudioTimeSyncController::Update, void, AudioTimeSyncController* self) {
+MACE_HOOK_MATCH(AudioTimeSyncController_Update, &AudioTimeSyncController::Update, void, AudioTimeSyncController* self) {
     AudioTimeSyncController_Update(self);
 
     if (getModConfig().Enabled.GetValue() && initSuccessful) {
@@ -48,7 +51,7 @@ Make_HOOK_MATCH(AudioTimeSyncController_Update, &AudioTimeSyncController::Update
     }
 }
 
-Make_HOOK_MATCH(NoteController_SendNoteWasCutEvent, &NoteController::SendNoteWasCutEvent, void, NoteController* self, ByRef<NoteCutInfo> noteCutInfo) {
+MACE_HOOK_MATCH(NoteController_SendNoteWasCutEvent, &NoteController::SendNoteWasCutEvent, void, NoteController* self, ByRef<NoteCutInfo> noteCutInfo) {
     if (getModConfig().Enabled.GetValue() && initSuccessful && 
         noteCutInfo->get_allIsOK() && 
         self->noteData->gameplayType != NoteData::GameplayType::BurstSliderElement) {
@@ -58,7 +61,7 @@ Make_HOOK_MATCH(NoteController_SendNoteWasCutEvent, &NoteController::SendNoteWas
     NoteController_SendNoteWasCutEvent(self, noteCutInfo);
 }
 
-Make_HOOK_FIND_CLASS_UNSAFE_INSTANCE(GameplayCoreSceneSetupData_ctor, "", "GameplayCoreSceneSetupData", ".ctor", void, 
+MACE_HOOK_FIND_CLASS_UNSAFE_INSTANCE(GameplayCoreSceneSetupData_ctor, "", "GameplayCoreSceneSetupData", ".ctor", void, 
     GameplayCoreSceneSetupData* self, IDifficultyBeatmap* f1, IPreviewBeatmapLevel* f2, 
     GameplayModifiers* f3, PlayerSpecificSettings* f4, PracticeSettings* f5, bool f6, 
     bool f7, bool f8, ColorScheme* colorScheme, AudioClip* f9, float f10, float f11, 
@@ -72,16 +75,58 @@ Make_HOOK_FIND_CLASS_UNSAFE_INSTANCE(GameplayCoreSceneSetupData_ctor, "", "Gamep
 
 void SetupModSettings(HMUI::ViewController* self, bool firstActivation, bool addedToHierarchy, bool screenSystemEnabling) {
     if (firstActivation) {
-        auto layout = QuestUI::BeatSaberUI::CreateVerticalLayoutGroup(self);
-        layout->set_childControlHeight(false);
-        layout->set_childForceExpandHeight(false);
-        layout->set_spacing(1.0f);
-
-        QuestUI::BeatSaberUI::AddConfigValueToggle(layout, getModConfig().Enabled);
-        QuestUI::BeatSaberUI::AddConfigValueToggle(layout, getModConfig().Dynamic);
-        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(layout, getModConfig().FadeSpeed, 0.5f, 0.1f, 0.5f, 3.0f);
-        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(layout, getModConfig().SliceScale, 0.1f, 0.1f, 0.3f, 1.0f);
-        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(layout, getModConfig().PositionZ, 1.0f, 1.0f, 10.0f, 20.0f);
+        auto container = QuestUI::BeatSaberUI::CreateVerticalLayoutGroup(self);
+        container->set_childControlHeight(false);
+        container->set_childForceExpandHeight(false);
+        container->set_spacing(0.5f);
+        container->set_padding({2, 2, 2, 2});
+        
+        // Title
+        auto title = QuestUI::BeatSaberUI::CreateText(container, "<size=80%><b>Slice Visualizer Settings</b></size>");
+        title->set_alignment(TMPro::TextAlignmentOptions::Center);
+        
+        // Main toggles section
+        auto mainToggleLayout = QuestUI::BeatSaberUI::CreateVerticalLayoutGroup(container);
+        mainToggleLayout->set_childControlHeight(false);
+        mainToggleLayout->set_childForceExpandHeight(false);
+        mainToggleLayout->set_spacing(1.0f);
+        
+        QuestUI::BeatSaberUI::AddConfigValueToggle(mainToggleLayout, getModConfig().Enabled);
+        QuestUI::BeatSaberUI::AddConfigValueToggle(mainToggleLayout, getModConfig().Dynamic);
+        
+        // Visual Settings
+        auto visualHeader = QuestUI::BeatSaberUI::CreateText(container, "<size=70%><b>Visual Settings</b></size>");
+        visualHeader->set_alignment(TMPro::TextAlignmentOptions::Center);
+        visualHeader->set_fontSize(4);
+        
+        auto visualLayout = QuestUI::BeatSaberUI::CreateVerticalLayoutGroup(container);
+        visualLayout->set_childControlHeight(false);
+        visualLayout->set_childForceExpandHeight(false);
+        visualLayout->set_spacing(0.5f);
+        
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(visualLayout, getModConfig().FadeSpeed, 0.1f, 0.1f, 0.1f, 3.0f);
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(visualLayout, getModConfig().SliceScale, 0.05f, 0.1f, 0.3f, 1.0f);
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(visualLayout, getModConfig().LineThickness, 0.1f, 0.1f, 0.5f, 2.0f);
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(visualLayout, getModConfig().Opacity, 0.05f, 0.1f, 0.3f, 1.0f);
+        
+        // Position Settings
+        auto positionHeader = QuestUI::BeatSaberUI::CreateText(container, "<size=70%><b>Position Settings</b></size>");
+        positionHeader->set_alignment(TMPro::TextAlignmentOptions::Center);
+        positionHeader->set_fontSize(4);
+        
+        auto positionLayout = QuestUI::BeatSaberUI::CreateVerticalLayoutGroup(container);
+        positionLayout->set_childControlHeight(false);
+        positionLayout->set_childForceExpandHeight(false);
+        positionLayout->set_spacing(0.5f);
+        
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(positionLayout, getModConfig().PositionX, 0.5f, 0.1f, -5.0f, 5.0f);
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(positionLayout, getModConfig().PositionY, 0.5f, 0.1f, 0.0f, 6.0f);
+        QuestUI::BeatSaberUI::AddConfigValueIncrementFloat(positionLayout, getModConfig().PositionZ, 1.0f, 0.5f, 5.0f, 25.0f);
+        
+        // Info text
+        auto infoText = QuestUI::BeatSaberUI::CreateText(container, "<size=60%>Settings apply to next song</size>");
+        infoText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        infoText->set_fontSize(2);
     }
 }
 
