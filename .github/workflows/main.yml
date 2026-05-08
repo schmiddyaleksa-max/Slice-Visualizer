@@ -29,7 +29,7 @@ jobs:
     - name: Install build tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build
+        sudo apt-get install -y ninja-build jq
 
     - name: Setup CMake
       uses: jwlawson/actions-setup-cmake@v1
@@ -43,55 +43,57 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Version: $VERSION"
 
-    - name: Create extern directory structure
+    - name: Setup QPM
       run: |
-        mkdir -p extern/includes
-        mkdir -p extern/libs/arm64-v8a
+        mkdir -p $HOME/qpm
+        cd $HOME/qpm
+        wget https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip -O qpm.zip
+        unzip -q qpm.zip
+        chmod +x qpm
+        cd -
+        export PATH="$HOME/qpm:$PATH"
+        echo "$HOME/qpm" >> $GITHUB_PATH
 
-    - name: Download beatsaber-hook
+    - name: Restore QPM dependencies
+      continue-on-error: true
       run: |
-        cd extern
-        wget -q https://github.com/sc2ad/beatsaber-hook/releases/download/v3.14.0/beatsaber-hook_3_14_0.zip
-        unzip -q beatsaber-hook_3_14_0.zip
-        rm beatsaber-hook_3_14_0.zip
-
-    - name: Download modloader
-      run: |
-        cd extern
-        wget -q https://github.com/sc2ad/modloader/releases/download/v1.2.3/modloader_1_2_3.zip
-        unzip -q modloader_1_2_3.zip
-        rm modloader_1_2_3.zip
-
-    - name: Download custom-types
-      run: |
-        cd extern
-        wget -q https://github.com/sc2ad/BeatSaber-IPA-Reloaded/releases/download/custom-types-0.15.21/custom-types_0_15_21.zip
-        unzip -q custom-types_0_15_21.zip
-        rm custom-types_0_15_21.zip
-
-    - name: Download questui
-      run: |
-        cd extern
-        wget -q https://github.com/RedBrumbler/questui/releases/download/v0.17.3/questui_0_17_3.zip
-        unzip -q questui_0_17_3.zip
-        rm questui_0_17_3.zip
-
-    - name: Download config-utils
-      run: |
-        cd extern
-        wget -q https://github.com/Lauriethefish/config-utils/releases/download/v1.0.2/config-utils_1_0_2.zip
-        unzip -q config-utils_1_0_2.zip
-        rm config-utils_1_0_2.zip
-
-    - name: Download codegen
-      run: |
-        cd extern
-        wget -q https://github.com/sc2ad/BeatSaber-IPA-Reloaded/releases/download/codegen-0.33.0/codegen_0_33_0.zip
-        unzip -q codegen_0_33_0.zip
-        rm codegen_0_33_0.zip
+        qpm restore || echo "QPM restore had issues, continuing with build"
 
     - name: Create build directory
       run: mkdir -p build
+
+    - name: Generate qpm_defines if missing
+      run: |
+        if [ ! -f qpm_defines.cmake ]; then
+          cat > qpm_defines.cmake << 'EOF'
+cmake_minimum_required(VERSION 3.21)
+
+set(COMPILE_ID "slicevisualizer")
+set(MOD_VERSION "${PROJECT_VERSION}")
+set(MOD_ID "slicevisualizer")
+
+set(SHARED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+set(EXTERN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern)
+set(CODEGEN_ID "codegen")
+
+if(NOT EXISTS "${EXTERN_DIR}")
+    message(FATAL_ERROR "extern directory not found")
+endif()
+
+set(so_list "")
+set(a_list "")
+
+file(GLOB_RECURSE extern_libs "${EXTERN_DIR}/**/*.so")
+list(APPEND so_list ${extern_libs})
+
+file(GLOB_RECURSE extern_archives "${EXTERN_DIR}/**/*.a")
+list(APPEND a_list ${extern_archives})
+
+macro(RECURSE_FILES return_list dir_name)
+    file(GLOB_RECURSE ${return_list} "${dir_name}")
+endmacro(RECURSE_FILES)
+EOF
+        fi
 
     - name: Configure CMake
       working-directory: build
@@ -101,42 +103,75 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_ABI=arm64-v8a \
           -DANDROID_PLATFORM=android-24 \
+          -DCMAKE_CXX_STANDARD=20 \
           -G Ninja
 
     - name: Build
       working-directory: build
       run: ninja
 
-    - name: Package QMOD
-      working-directory: build
+    - name: Create QMOD structure
       run: |
-        mkdir -p qmod/libs/arm64-v8a
-        mkdir -p qmod/mod.json
-        cp libslicevisualizer.so qmod/libs/arm64-v8a/
+        mkdir -p qmod_build/libs/arm64-v8a
+        if [ -f build/libslicevisualizer.so ]; then
+          cp build/libslicevisualizer.so qmod_build/libs/arm64-v8a/
+        elif [ -f build/libslicevisualizer_debug.so ]; then
+          cp build/libslicevisualizer_debug.so qmod_build/libs/arm64-v8a/libslicevisualizer.so
+        else
+          echo "Error: .so file not found in build directory"
+          ls -la build/
+          exit 1
+        fi
+
+    - name: Create mod.json
+      run: |
+        cat > qmod_build/mod.json << EOF
+        {
+          "\$schema": "https://raw.githubusercontent.com/Lauriethefish/QuestPatcher.QMod/main/QuestPatcher.QMod/Resources/qmod.schema.json",
+          "_QPVersion": "0.1.1",
+          "name": "Slice Visualizer",
+          "id": "slicevisualizer",
+          "author": "schmiddyaleksa-max",
+          "version": "${{ steps.version.outputs.version }}",
+          "packageId": "com.beatgames.beatsaber",
+          "packageVersion": "1.40.8_11819662659",
+          "description": "See your slices right in front of you",
+          "coverImage": "cover.png",
+          "dependencies": [],
+          "modFiles": [],
+          "libraryFiles": [],
+          "fileCopies": []
+        }
+        EOF
+
+    - name: Copy cover image
+      run: |
+        if [ -f cover.png ]; then
+          cp cover.png qmod_build/
+        fi
+
+    - name: Create QMOD file
+      run: |
+        cd qmod_build
+        zip -r ../slicevisualizer-${{ steps.version.outputs.version }}.qmod .
         cd ..
-        cp mod.template.json mod.json
-        sed -i 's/${mod_name}/Slice Visualizer/g' mod.json
-        sed -i 's/${mod_id}/slicevisualizer/g' mod.json
-        sed -i "s/\${version}/${{ steps.version.outputs.version }}/g" mod.json
-        mv mod.json build/qmod/
-        if [ -f cover.png ]; then cp cover.png build/qmod/; fi
-        cd build
-        zip -r slicevisualizer-${{ steps.version.outputs.version }}.qmod qmod/
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: slicevisualizer-${{ steps.version.outputs.version }}.qmod
-        path: build/slicevisualizer-${{ steps.version.outputs.version }}.qmod
+        path: slicevisualizer-${{ steps.version.outputs.version }}.qmod
         retention-days: 30
 
     - name: Create release on tag
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
-        files: build/slicevisualizer-${{ steps.version.outputs.version }}.qmod
+        files: slicevisualizer-${{ steps.version.outputs.version }}.qmod
         body: |
           # Slice Visualizer v${{ steps.version.outputs.version }}
+          
+          **Beat Saber 1.40.8 Compatible**
           
           Automated build from GitHub Actions
         draft: false
@@ -147,5 +182,4 @@ jobs:
     - name: Cleanup
       if: always()
       run: |
-        rm -rf build/qmod
-        rm -f build/*.qmod
+        rm -rf qmod_build
