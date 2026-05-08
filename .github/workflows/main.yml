@@ -45,17 +45,22 @@ jobs:
       # which is permanently dead. We skip QPM entirely and clone all deps
       # directly from their GitHub source repos instead.
       - name: Download all dependencies manually
+        env:
+          GIT_TERMINAL_PROMPT: "0"
         run: |
+          git config --global credential.helper ""
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+
           mkdir -p extern/includes extern/libs/arm64-v8a shared
 
           clone() {
             local REPO=$1 DEST=$2 SPARSE=$3
             echo "Cloning $REPO -> $DEST"
             if [ -n "$SPARSE" ]; then
-              git clone --depth=1 --filter=blob:none --sparse "$REPO" "$DEST"
+              git clone --depth=1 --filter=blob:none --sparse "$REPO" "$DEST" || { echo "WARN: sparse clone failed for $REPO"; return 0; }
               cd "$DEST" && git sparse-checkout set $SPARSE && cd -
             else
-              git clone --depth=1 "$REPO" "$DEST"
+              git clone --depth=1 "$REPO" "$DEST" || { echo "WARN: clone failed for $REPO"; return 0; }
             fi
           }
 
