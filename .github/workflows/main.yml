@@ -79,18 +79,13 @@ jobs:
           curl -sL "https://github.com/sc2ad/beatsaber-hook/releases/download/v3.14.0/libbeatsaber-hook_3_14_0.so" \
             -o extern/libs/arm64-v8a/libbeatsaber-hook_3_14_0.so
 
-          # modloader — try ModLoader repo, fall back to stub
-          clone https://github.com/sc2ad/ModLoader.git /tmp/modloader2
-          if [ -d /tmp/modloader2/shared ]; then
-            cp -r /tmp/modloader2/shared extern/includes/modloader
-          else
-            mkdir -p extern/includes/modloader/shared
-            cat > extern/includes/modloader/shared/modloader.hpp << 'HPP'
-          #pragma once
-          #include <string>
-          struct ModInfo { std::string id; std::string version; };
-          HPP
-          fi
+          # modloader — sc2ad/ModLoader is inaccessible, use stub directly
+          mkdir -p extern/includes/modloader/shared
+          cat > extern/includes/modloader/shared/modloader.hpp << 'HPP'
+#pragma once
+#include <string>
+struct ModInfo { std::string id; std::string version; };
+HPP
 
           # questui v0.17.3
           clone https://github.com/darknight1050/questui.git /tmp/questui shared
@@ -98,16 +93,20 @@ jobs:
           curl -sL "https://github.com/darknight1050/questui/releases/download/v0.17.3/libquestui.so" \
             -o extern/libs/arm64-v8a/libquestui.so 2>/dev/null || true
 
-          # config-utils v1.0.2 — full clone, try shared/ then include/ then whole repo
+          # config-utils v1.0.2 — full clone, gate all copies on clone success
           clone https://github.com/Fernthedev/config-utils.git /tmp/config-utils
           mkdir -p extern/includes/config-utils
-          if [ -d /tmp/config-utils/shared ]; then
-            cp -r /tmp/config-utils/shared extern/includes/config-utils/shared
-          elif [ -d /tmp/config-utils/include ]; then
-            cp -r /tmp/config-utils/include extern/includes/config-utils/include
+          if [ -d /tmp/config-utils ]; then
+            if [ -d /tmp/config-utils/shared ]; then
+              cp -r /tmp/config-utils/shared extern/includes/config-utils/shared
+            elif [ -d /tmp/config-utils/include ]; then
+              cp -r /tmp/config-utils/include extern/includes/config-utils/include
+            else
+              echo "WARN: config-utils no shared/include dir, copying all"
+              cp -r /tmp/config-utils/. extern/includes/config-utils/ 2>/dev/null || true
+            fi
           else
-            echo "WARN: config-utils no shared/include dir, copying all"
-            cp -r /tmp/config-utils/. extern/includes/config-utils/
+            echo "WARN: config-utils clone failed entirely, skipping headers"
           fi
           curl -sL "https://github.com/Fernthedev/config-utils/releases/download/v1.0.2/libconfig-utils.so" \
             -o extern/libs/arm64-v8a/libconfig-utils.so 2>/dev/null || true
@@ -160,7 +159,7 @@ jobs:
           set(so_list ${so_files})
           file(GLOB_RECURSE a_files "${EXTERN_DIR}/libs/arm64-v8a/*.a")
           set(a_list ${a_files})
-          EOF
+EOF
 
       - name: Generate extern.cmake
         run: |
@@ -180,7 +179,7 @@ jobs:
             ${EXTERN_DIR}/includes/codegen/include
             ${EXTERN_DIR}/includes/libil2cpp/il2cpp/libil2cpp
           )
-          EOF
+EOF
 
       - name: Configure CMake
         run: |
