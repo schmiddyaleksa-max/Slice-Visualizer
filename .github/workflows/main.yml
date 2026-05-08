@@ -17,8 +17,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -28,7 +26,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y ninja-build jq curl zip
 
       - name: Setup CMake
@@ -36,91 +34,32 @@ jobs:
         with:
           cmake-version: '3.22.1'
 
-      - name: Get version from qpm.json
+      - name: Get version
         id: version
         run: |
           VERSION=$(jq -r '.info.version' qpm.json)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Download and setup QPM
+      - name: Setup QPM
         run: |
           mkdir -p $HOME/.local/bin
-          curl -L "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip" \
+          curl -sL "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.9/qpm-linux-x64.zip" \
             -o /tmp/qpm.zip
           unzip -q /tmp/qpm.zip -d $HOME/.local/bin
           chmod +x $HOME/.local/bin/qpm
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          qpm --version
 
-      - name: Pre-populate QPM cache with libil2cpp headers
-        # il2cpp.thnght.pro is permanently offline. QPM v1.5.9 tries to download
-        # libil2cpp from there. We clone the Unity 2019 il2cpp sources from GitHub
-        # and place them exactly where QPM caches them, so it skips the download.
-        run: |
-          # QPM stores downloaded packages here (QPM-RS = QPM Rust = QPM v1.5.9)
-          CACHE_DIR="$HOME/.local/share/QPM-RS/cache"
-          IL2CPP_CACHE="$CACHE_DIR/libil2cpp/0.2.5"
-          mkdir -p "$IL2CPP_CACHE"
-
-          echo "Cloning Unity 2019 libil2cpp sources..."
-          git clone --depth=1 --filter=blob:none --sparse \
-            https://github.com/4ch12dy/il2cpp.git /tmp/il2cpp_repo
-          cd /tmp/il2cpp_repo
-          git sparse-checkout set unity_2019_x/libil2cpp
-
-          # QPM expects the headers at cache/libil2cpp/0.2.5/il2cpp/libil2cpp/
-          mkdir -p "$IL2CPP_CACHE/il2cpp"
-          cp -r /tmp/il2cpp_repo/unity_2019_x/libil2cpp "$IL2CPP_CACHE/il2cpp/libil2cpp"
-
-          echo "Cached libil2cpp at: $IL2CPP_CACHE"
-          ls "$IL2CPP_CACHE/il2cpp/libil2cpp" | head -10
-
-      - name: Restore dependencies with QPM
-        run: |
-          # QPM restore downloads headers into extern/ and generates
-          # qpm_defines.cmake and extern.cmake — do NOT overwrite these.
-          qpm restore
-          echo "QPM restore finished with exit code: $?"
-
-      - name: Verify dependencies were restored
-        run: |
-          echo "=== extern/includes contents ==="
-          find extern/includes -maxdepth 2 -type d 2>/dev/null || echo "(empty or missing)"
-
-          MISSING=0
-          for header in \
-            "modloader/shared/modloader.hpp" \
-            "beatsaber-hook/shared/utils/hooking.hpp" \
-            "questui/shared/QuestUI.hpp" \
-            "config-utils/shared/config-utils.hpp"; do
-            if [ ! -f "extern/includes/$header" ]; then
-              echo "ERROR: Missing extern/includes/$header"
-              MISSING=1
-            else
-              echo "OK: $header"
-            fi
-          done
-          [ $MISSING -eq 0 ] || exit 1
-          echo "All required headers present!"
-
-      - name: Verify QPM-generated cmake files
-        run: |
-          [ -f "qpm_defines.cmake" ] || { echo "ERROR: qpm_defines.cmake missing"; exit 1; }
-          [ -f "extern.cmake" ]      || { echo "ERROR: extern.cmake missing"; exit 1; }
-          echo "=== qpm_defines.cmake ==="
-          cat qpm_defines.cmake
-          echo ""
-          echo "=== extern.cmake (first 20 lines) ==="
-          head -20 extern.cmake
-
-      - name: Create build directory
-        run: mkdir -p build
+      - name: Restore dependencies
+        # libil2cpp is declared with headersOnly:true in qpm.json so QPM
+        # skips downloading from il2cpp.thnght.pro (which is permanently offline).
+        # All other deps come from the QPM registry normally.
+        run: qpm restore
 
       - name: Configure CMake
-        working-directory: build
         run: |
-          cmake .. \
+          mkdir -p build
+          cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a \
@@ -129,51 +68,24 @@ jobs:
             -G Ninja
 
       - name: Build
-        working-directory: build
-        run: ninja -v
+        run: cmake --build build --config RelWithDebInfo
 
-      - name: Verify build output
-        run: |
-          if [ ! -f "build/libslicevisualizer.so" ]; then
-            echo "ERROR: libslicevisualizer.so not found after build"
-            ls -la build/
-            exit 1
-          fi
-          echo "Build succeeded:"
-          ls -lh build/libslicevisualizer.so
-
-      - name: Create QMOD structure
-        run: |
-          mkdir -p qmod_build/libs/arm64-v8a
-          cp build/libslicevisualizer.so qmod_build/libs/arm64-v8a/
-
-      - name: Create mod.json from template
+      - name: Package QMOD
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p qmod_build/libs/arm64-v8a
+
+          cp build/libslicevisualizer.so qmod_build/libs/arm64-v8a/
+
           sed -e "s/\${mod_name}/Slice Visualizer/g" \
               -e "s/\${mod_id}/slicevisualizer/g" \
               -e "s/\${version}/$VERSION/g" \
               mod.template.json > qmod_build/mod.json
-          echo "Generated mod.json:"
-          cat qmod_build/mod.json
 
-      - name: Copy cover image
-        run: |
-          if [ -f cover.png ]; then
-            cp cover.png qmod_build/
-            echo "Cover image included."
-          else
-            echo "No cover.png found, skipping."
-          fi
+          [ -f cover.png ] && cp cover.png qmod_build/
 
-      - name: Create QMOD file
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
           cd qmod_build
           zip -r "../slicevisualizer-${VERSION}.qmod" .
-          cd ..
-          echo "Created: slicevisualizer-${VERSION}.qmod"
-          ls -lh "slicevisualizer-${VERSION}.qmod"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -182,22 +94,15 @@ jobs:
           path: slicevisualizer-${{ steps.version.outputs.version }}.qmod
           retention-days: 30
 
-      - name: Create release on tag
+      - name: Create release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: slicevisualizer-${{ steps.version.outputs.version }}.qmod
           body: |
             # Slice Visualizer v${{ steps.version.outputs.version }}
-
             **Beat Saber 1.40.8 Compatible**
-
-            Automated build from GitHub Actions
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup
-        if: always()
-        run: rm -rf qmod_build
